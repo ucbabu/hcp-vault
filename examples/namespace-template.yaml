@@ -1,0 +1,120 @@
+# Namespace Template for Vault Secrets Operator
+# Replace ${DOMAIN} with your actual domain name before applying
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${DOMAIN}
+  labels:
+    domain: ${DOMAIN}
+    vault-injection: enabled
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: ${DOMAIN}
+  name: vault-secrets-operator
+  annotations:
+    # Uncomment and configure if using Azure Workload Identity
+    # azure.workload.identity/client-id: "your-client-id"
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ${DOMAIN}
+  name: vault-secrets-operator
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "update", "patch", "get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: ${DOMAIN}
+  name: vault-secrets-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vault-secrets-operator
+subjects:
+- kind: ServiceAccount
+  name: vault-secrets-operator
+  namespace: ${DOMAIN}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-secrets-operator-${DOMAIN}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: vault-secrets-operator
+  namespace: ${DOMAIN}
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultConnection
+metadata:
+  namespace: ${DOMAIN}
+  name: vault-connection
+spec:
+  address: "${VAULT_ADDR}"
+  skipTLSVerify: false
+  tlsServerName: "${VAULT_HOST}"
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  namespace: ${DOMAIN}
+  name: vault-auth
+spec:
+  method: jwt
+  mount: ${DOMAIN}-k8s
+  jwt:
+    role: ${DOMAIN}-role
+    serviceAccount: vault-secrets-operator
+    audiences:
+      - "https://kubernetes.default.svc.cluster.local"
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  namespace: ${DOMAIN}
+  name: app-config
+spec:
+  type: kv-v2
+  mount: secret
+  path: ${DOMAIN}/app-config
+  destination:
+    name: app-config
+    create: true
+  refreshAfter: 30s
+  vaultAuthRef: vault-auth
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultDynamicSecret
+metadata:
+  namespace: ${DOMAIN}
+  name: redis-credentials
+spec:
+  mount: database
+  path: creds/redis-role
+  destination:
+    name: redis-credentials
+    create: true
+    transformation:
+      templates:
+        redis_url: |
+          redis://{{ .Secrets.username }}:{{ .Secrets.password }}@${REDIS_HOST}:6379
+        redis_username: "{{ .Secrets.username }}"
+        redis_password: "{{ .Secrets.password }}"
+  refreshAfter: 300s
+  renewalPercent: 67
+  vaultAuthRef: vault-auth

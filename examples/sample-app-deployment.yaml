@@ -1,0 +1,188 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: dev
+  name: sample-app
+  labels:
+    app: sample-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sample-app
+  template:
+    metadata:
+      labels:
+        app: sample-app
+    spec:
+      serviceAccountName: vault-secrets-operator
+      containers:
+      - name: app
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        env:
+        # Environment variables from static secrets
+        - name: LOG_LEVEL
+          valueFrom:
+            secretKeyRef:
+              name: app-config
+              key: log_level
+        - name: API_URL
+          valueFrom:
+            secretKeyRef:
+              name: app-config
+              key: api_url
+        # Dynamic Redis credentials
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: redis_url
+        - name: REDIS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: redis_username
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: redis_password
+        # Mount additional secrets as files
+        volumeMounts:
+        - name: database-config
+          mountPath: /etc/secrets/database
+          readOnly: true
+        - name: certificates
+          mountPath: /etc/ssl/certs/app
+          readOnly: true
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        # Resource limits
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+      # Init container to validate secrets
+      initContainers:
+      - name: secret-validator
+        image: curlimages/curl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Validating secrets..."
+          if [ -z "$REDIS_USERNAME" ]; then
+            echo "ERROR: REDIS_USERNAME is not set"
+            exit 1
+          fi
+          if [ -z "$REDIS_PASSWORD" ]; then
+            echo "ERROR: REDIS_PASSWORD is not set"
+            exit 1
+          fi
+          if [ ! -f "/etc/secrets/database/host" ]; then
+            echo "ERROR: Database config not mounted"
+            exit 1
+          fi
+          echo "All secrets validated successfully"
+        env:
+        - name: REDIS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: redis_username
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: redis_password
+        volumeMounts:
+        - name: database-config
+          mountPath: /etc/secrets/database
+          readOnly: true
+      volumes:
+      - name: database-config
+        secret:
+          secretName: database-config
+          optional: true
+      - name: certificates
+        secret:
+          secretName: app-certificates
+          optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: dev
+  name: sample-app-service
+  labels:
+    app: sample-app
+spec:
+  selector:
+    app: sample-app
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP
+---
+# Additional VaultStaticSecret for database configuration
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  namespace: dev
+  name: database-config
+spec:
+  type: kv-v2
+  mount: secret
+  path: dev/database/postgres
+  destination:
+    name: database-config
+    create: true
+    transformation:
+      excludes:
+      - "internal_*"
+      templates:
+        connection_string: |
+          postgresql://{{ .Secrets.username }}:{{ .Secrets.password }}@{{ .Secrets.host }}:{{ .Secrets.port }}/{{ .Secrets.database }}?sslmode={{ .Secrets.ssl_mode }}
+        host: "{{ .Secrets.host }}"
+        port: "{{ .Secrets.port }}"
+        database: "{{ .Secrets.database }}"
+  refreshAfter: 60s
+  vaultAuthRef: vault-auth
+---
+# Optional: VaultStaticSecret for TLS certificates
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  namespace: dev
+  name: app-certificates
+spec:
+  type: kv-v2
+  mount: secret
+  path: dev/certificates/app
+  destination:
+    name: app-certificates
+    create: true
+    type: kubernetes.io/tls
+    transformation:
+      templates:
+        tls.crt: "{{ .Secrets.certificate }}"
+        tls.key: "{{ .Secrets.private_key }}"
+  refreshAfter: 24h
+  vaultAuthRef: vault-auth

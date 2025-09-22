@@ -1,0 +1,67 @@
+# HCP Authentication
+hcp_client_id     = "your-hcp-client-id"
+hcp_client_secret = "your-hcp-client-secret"
+
+# HCP HVN Configuration
+hvn_id          = "vault-hvn"
+cloud_provider  = "azure"          # or "aws"
+region          = "eastus"         # Azure: eastus, westus2, etc. AWS: us-east-1, us-west-2, etc.
+hvn_cidr_block  = "172.25.16.0/20"
+
+# Vault Cluster Configuration
+vault_cluster_id      = "my-vault-cluster"
+vault_tier           = "dev"                    # dev, starter_small, standard_small, standard_medium, standard_large
+vault_public_endpoint = true
+vault_namespace      = null                     # HCP Plus only
+
+# KV Engine Configuration
+kv_path    = "secret"
+kv_version = 2
+
+# Redis Configuration
+redis_host     = "your-redis-host.example.com"
+redis_port     = 6379
+redis_username = "default"
+redis_password = "your-redis-password"
+redis_tls      = false
+
+# Kubernetes Configuration
+k8s_host   = "https://your-aks-cluster.hcp.eastus.azmk8s.io"
+k8s_ca_cert = <<EOF
+-----BEGIN CERTIFICATE-----
+YOUR_K8S_CA_CERTIFICATE_HERE
+-----END CERTIFICATE-----
+EOF
+
+# JWT/OIDC Configuration
+jwt_issuer           = "https://sts.windows.net/your-tenant-id/"  # For Azure AD
+jwt_bound_audiences  = ["https://kubernetes.default.svc.cluster.local"]
+
+# Namespace Configuration
+namespaces = {
+  "development" = {
+    domain      = "dev"
+    description = "Development environment"
+    policies    = ["dev-policy"]
+    kv_paths    = ["secret/dev"]
+  }
+  "staging" = {
+    domain      = "staging"
+    description = "Staging environment"
+    policies    = ["staging-policy"]
+    kv_paths    = ["secret/staging"]
+  }
+  "production" = {
+    domain      = "prod"
+    description = "Production environment"
+    policies    = ["prod-policy"]
+    kv_paths    = ["secret/prod"]
+  }
+}
+
+# Optional: Audit and Metrics Configuration
+# grafana_endpoint_id     = "your-grafana-endpoint-id"
+# grafana_user           = "your-grafana-user"
+# grafana_password       = "your-grafana-password"
+# datadog_api_key        = "your-datadog-api-key"
+# datadog_region         = "us1"
