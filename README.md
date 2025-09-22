@@ -76,6 +76,45 @@ graph TB
     └── multi-namespace-onboarding.md
 ```
 
+## 🔧 AKS OIDC Setup
+
+Before deploying Vault, you need to extract OIDC issuer URL and certificates from your AKS cluster:
+
+### Quick OIDC Check
+
+```bash
+# Check if OIDC is enabled and get issuer URL
+./scripts/aks-setup/quick-oidc.sh myResourceGroup myAKSCluster
+
+# Using Make
+make aks-quick-oidc RESOURCE_GROUP=myRG CLUSTER_NAME=myCluster
+```
+
+### Complete Configuration Extraction
+
+```bash
+# Get complete configuration with certificates
+./scripts/aks-setup/get-aks-info.sh -g myResourceGroup -n myAKSCluster
+
+# Save to terraform.tfvars
+./scripts/aks-setup/get-aks-info.sh -g myRG -n myCluster -f terraform >> terraform.tfvars
+
+# Using Make
+make aks-get-config RESOURCE_GROUP=myRG CLUSTER_NAME=myCluster OUTPUT_FILE=aks-config.tf
+```
+
+### Enable OIDC (if needed)
+
+```bash
+# Enable OIDC issuer on existing AKS cluster
+./scripts/aks-setup/enable-oidc.sh myResourceGroup myAKSCluster
+
+# Using Make
+make aks-enable-oidc RESOURCE_GROUP=myRG CLUSTER_NAME=myCluster
+```
+
+For detailed AKS setup instructions, see [AKS Setup Guide](scripts/aks-setup/README.md).
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -101,11 +140,17 @@ cp terraform.tfvars.example terraform.tfvars
 
 ### 2. Configure HCP Authentication
 
-Get your HCP credentials from the [HCP Console](https://portal.cloud.hashicorp.com/):
+Get your HCP credentials from the [HCP Console](https://portal.cloud.hashicorp.com/) and extract AKS OIDC information:
 
 ```bash
 # Edit terraform.tfvars
 vim terraform.tfvars
+
+# Extract OIDC and certificates from AKS
+./scripts/aks-setup/quick-oidc.sh myResourceGroup myAKSCluster
+
+# Or get complete configuration
+./scripts/aks-setup/get-aks-info.sh -g myResourceGroup -n myAKSCluster -f terraform >> terraform.tfvars
 ```
 
 Set the required variables:

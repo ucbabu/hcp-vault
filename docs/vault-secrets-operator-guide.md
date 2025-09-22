@@ -28,9 +28,71 @@ graph TB
 ## Prerequisites
 
 1. **HCP Vault Cluster**: Deployed using the provided Terraform configuration
-2. **AKS Cluster**: Running Kubernetes 1.21+
+2. **AKS Cluster**: Running Kubernetes 1.21+ with OIDC issuer enabled
 3. **Vault Secrets Operator**: Installed in your AKS cluster
 4. **Service Account**: Configured with proper JWT token
+5. **OIDC Configuration**: Extracted from your AKS cluster
+
+### Getting AKS OIDC and Certificate Information
+
+Before proceeding, you need to extract the OIDC issuer URL and certificates from your AKS cluster. Use the provided scripts:
+
+#### Method 1: Quick OIDC Check
+
+```bash
+# Quick check if OIDC is enabled and get the issuer URL
+./scripts/aks-setup/quick-oidc.sh <resource-group> <cluster-name>
+
+# Example:
+./scripts/aks-setup/quick-oidc.sh myResourceGroup myAKSCluster
+```
+
+#### Method 2: Complete Configuration Extraction
+
+```bash
+# Get complete AKS configuration including certificates
+./scripts/aks-setup/get-aks-info.sh -g <resource-group> -n <cluster-name>
+
+# Save directly to terraform format
+./scripts/aks-setup/get-aks-info.sh -g myRG -n myCluster -f terraform -o aks-config.tf
+
+# Save as environment variables
+./scripts/aks-setup/get-aks-info.sh -g myRG -n myCluster -f env > aks-env.sh
+source aks-env.sh
+```
+
+#### Method 3: Enable OIDC if Not Already Enabled
+
+If your AKS cluster doesn't have OIDC enabled:
+
+```bash
+# Enable OIDC issuer on existing AKS cluster
+./scripts/aks-setup/enable-oidc.sh <resource-group> <cluster-name>
+
+# Example:
+./scripts/aks-setup/enable-oidc.sh myResourceGroup myAKSCluster
+```
+
+**Manual Method (if scripts are not available):**
+
+```bash
+# Check if OIDC is enabled
+az aks show -g <resource-group> -n <cluster-name> --query 'oidcIssuerProfile.enabled'
+
+# Get OIDC issuer URL
+OIDC_ISSUER=$(az aks show -g <resource-group> -n <cluster-name> --query 'oidcIssuerProfile.issuerURL' -o tsv)
+echo "JWT Issuer: $OIDC_ISSUER"
+
+# Get Kubernetes API URL
+API_URL=$(az aks show -g <resource-group> -n <cluster-name> --query 'fqdn' -o tsv)
+echo "K8s Host: https://$API_URL"
+
+# Get cluster credentials
+az aks get-credentials -g <resource-group> -n <cluster-name>
+
+# Extract CA certificate
+kubectl config view --raw -o json | jq -r '.clusters[0].cluster."certificate-authority-data"' | base64 -d
+```
 
 ## Step 1: Install Vault Secrets Operator
 

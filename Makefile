@@ -68,6 +68,32 @@ destroy: ## Destroy all Terraform resources (WARNING: This will delete everythin
 fmt: ## Format Terraform code
 	terraform fmt -recursive
 
+# AKS Setup targets
+aks-quick-oidc: ## Quick OIDC extraction from AKS (requires RESOURCE_GROUP and CLUSTER_NAME)
+	@if [ -z "$(RESOURCE_GROUP)" ] || [ -z "$(CLUSTER_NAME)" ]; then \
+		echo "Usage: make aks-quick-oidc RESOURCE_GROUP=myRG CLUSTER_NAME=myCluster"; \
+		exit 1; \
+	fi
+	$(SCRIPT_DIR)/aks-setup/quick-oidc.sh "$(RESOURCE_GROUP)" "$(CLUSTER_NAME)"
+
+aks-get-config: ## Get complete AKS configuration (requires RESOURCE_GROUP and CLUSTER_NAME)
+	@if [ -z "$(RESOURCE_GROUP)" ] || [ -z "$(CLUSTER_NAME)" ]; then \
+		echo "Usage: make aks-get-config RESOURCE_GROUP=myRG CLUSTER_NAME=myCluster [OUTPUT_FILE=aks-config.tf]"; \
+		exit 1; \
+	fi
+	@if [ -n "$(OUTPUT_FILE)" ]; then \
+		$(SCRIPT_DIR)/aks-setup/get-aks-info.sh -g "$(RESOURCE_GROUP)" -n "$(CLUSTER_NAME)" -f terraform -o "$(OUTPUT_FILE)"; \
+	else \
+		$(SCRIPT_DIR)/aks-setup/get-aks-info.sh -g "$(RESOURCE_GROUP)" -n "$(CLUSTER_NAME)" -f terraform; \
+	fi
+
+aks-enable-oidc: ## Enable OIDC on AKS cluster (requires RESOURCE_GROUP and CLUSTER_NAME)
+	@if [ -z "$(RESOURCE_GROUP)" ] || [ -z "$(CLUSTER_NAME)" ]; then \
+		echo "Usage: make aks-enable-oidc RESOURCE_GROUP=myRG CLUSTER_NAME=myCluster"; \
+		exit 1; \
+	fi
+	$(SCRIPT_DIR)/aks-setup/enable-oidc.sh "$(RESOURCE_GROUP)" "$(CLUSTER_NAME)"
+
 docs: ## Generate/update documentation
 	@echo "Documentation is manually maintained in the docs/ directory"
 	@echo "Please review and update:"
