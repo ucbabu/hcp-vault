@@ -134,13 +134,13 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant Admin as Vault Admin
-    participant Vault as HCP Vault
-    participant OIDC as OIDC Provider
-    participant Cache as Vault Config
     participant Pod
     participant VSO
     participant K8sAPI as Kubernetes API
+    participant Vault as HCP Vault
+    participant OIDC as OIDC Provider
+    participant Cache as Vault Config
+    participant Admin as Vault Admin
     
     Note over Admin,Cache: Initial Setup Phase (One-time)
     Admin->>Vault: Configure JWT Auth Method
