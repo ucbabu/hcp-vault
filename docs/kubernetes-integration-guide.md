@@ -183,7 +183,7 @@ sequenceDiagram
 
 #### For OIDC/JWT Auth Method:
 - OIDC issuer enabled on your Kubernetes cluster
-- Public OIDC discovery endpoint accessible by Vault
+- kubectl access to export OIDC configuration (for offline setup)
 
 ## Method 1: Kubernetes Auth Method
 
