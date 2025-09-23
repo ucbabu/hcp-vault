@@ -139,14 +139,11 @@ sequenceDiagram
     participant VSO
     participant K8sAPI as Kubernetes API
     participant Vault as HCP Vault
-    participant Admin as Vault Admin
-    participant kubectl as kubectl CLI
+    participant Admin
     
-    Note over Admin,kubectl: Offline Initial Setup Phase (One-time)
-    Admin->>kubectl: Export OIDC Discovery Config
-    kubectl->>K8sAPI: Get OIDC Issuer & JWKS URLs
-    K8sAPI->>kubectl: Return OIDC Configuration
-    kubectl->>Admin: Export OIDC Config & Public Keys
+    Note over Admin,Vault: Offline Initial Setup Phase (One-time)
+    Admin->>K8sAPI: Export OIDC Discovery Config (kubectl)
+    K8sAPI->>Admin: Return OIDC Configuration
     Admin->>Vault: Import OIDC Config & Public Keys
     Vault->>Vault: Store OIDC Config & Public Keys Internally
     Note over Admin,Vault: No direct Vault ↔ OIDC connectivity required
