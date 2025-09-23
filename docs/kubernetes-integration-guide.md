@@ -104,9 +104,10 @@ graph TB
 - **Real-time Verification**: Each token is validated in real-time against the Kubernetes cluster
 
 #### OIDC/JWT Auth Method:
-- **Offline Validation**: Vault validates JWT tokens locally using pre-configured OIDC certificates
-- **No Runtime Connectivity**: No network calls to OIDC provider during token validation
-- **Cryptographic Verification**: Token signatures are verified using cached public keys from initial OIDC discovery
+- **Offline Configuration**: Export OIDC config using kubectl, then import into Vault (no direct connectivity required)
+- **Local Validation**: Vault validates JWT tokens locally using imported certificates
+- **Air-Gapped Support**: Suitable for environments where Vault cannot reach external OIDC endpoints
+- **Cryptographic Verification**: Token signatures are verified using imported public keys
 
 ### Kubernetes Auth Flow
 
@@ -138,14 +139,17 @@ sequenceDiagram
     participant VSO
     participant K8sAPI as Kubernetes API
     participant Vault as HCP Vault
-    participant OIDC as OIDC Provider
     participant Admin as Vault Admin
+    participant kubectl as kubectl CLI
     
-    Note over Admin,Vault: Initial Setup Phase (One-time)
-    Admin->>Vault: Configure JWT Auth Method
-    Vault->>OIDC: Fetch OIDC Discovery & JWKS
-    OIDC->>Vault: Return Public Keys/Certificates
+    Note over Admin,kubectl: Offline Initial Setup Phase (One-time)
+    Admin->>kubectl: Export OIDC Discovery Config
+    kubectl->>K8sAPI: Get OIDC Issuer & JWKS URLs
+    K8sAPI->>kubectl: Return OIDC Configuration
+    kubectl->>Admin: Export OIDC Config & Public Keys
+    Admin->>Vault: Import OIDC Config & Public Keys
     Vault->>Vault: Store OIDC Config & Public Keys Internally
+    Note over Admin,Vault: No direct Vault ↔ OIDC connectivity required
     
     Note over Pod,VSO: Runtime Secret Request Phase
     Pod->>VSO: Request Secret
@@ -154,7 +158,7 @@ sequenceDiagram
     VSO->>Vault: Login with JWT
     Vault->>Vault: Get Cached OIDC Public Keys (Internal)
     Vault->>Vault: Validate JWT Signature Locally
-    Note over Vault: No network call to OIDC provider<br/>Token validated with internally stored keys
+    Note over Vault: No network call to OIDC provider<br/>Token validated with imported keys
     Vault->>VSO: Return Vault Token
     VSO->>Vault: Request Secret with Vault Token
     Vault->>VSO: Return Secret
@@ -317,6 +321,32 @@ spec:
 
 ### Step 1: Extract OIDC Configuration from Kubernetes
 
+#### Method 1: Offline Configuration (Recommended for Air-Gapped Environments)
+
+```bash
+# Export OIDC configuration using kubectl (no direct Vault connectivity needed)
+
+# 1. Get OIDC issuer URL
+OIDC_ISSUER=$(kubectl get --raw /.well-known/openid_configuration | jq -r '.issuer')
+echo "OIDC Issuer: $OIDC_ISSUER"
+
+# 2. Export OIDC discovery configuration
+kubectl get --raw /.well-known/openid_configuration > oidc-discovery.json
+
+# 3. Get JWKS (JSON Web Key Set) - public keys for token validation
+JWKS_URI=$(cat oidc-discovery.json | jq -r '.jwks_uri')
+curl -s "$JWKS_URI" > jwks.json
+
+# 4. Extract individual components for Vault configuration
+echo "OIDC Discovery Configuration:"
+cat oidc-discovery.json | jq .
+
+echo "\nJWKS Public Keys:"
+cat jwks.json | jq .
+```
+
+#### Method 2: Direct Configuration (Requires Vault → OIDC Connectivity)
+
 For AKS clusters:
 ```bash
 # Get OIDC issuer URL
@@ -336,7 +366,41 @@ kubectl get --raw /.well-known/openid_configuration | jq .
 kubectl cluster-info dump | grep -i oidc
 ```
 
-### Step 2: Configure JWT Auth in Vault
+### Step 2: Configure JWT Auth in Vault (Offline Method)
+
+#### Import OIDC Configuration into Vault
+
+```bash
+# Set Vault environment
+export VAULT_ADDR="https://your-vault-cluster.vault.example.com:8200"
+export VAULT_TOKEN="your-admin-token"
+
+# Enable JWT auth method
+vault auth enable jwt
+
+# Method 1: Manual configuration with exported keys
+# Extract required values from exported files
+OIDC_ISSUER=$(cat oidc-discovery.json | jq -r '.issuer')
+JWKS_URI=$(cat oidc-discovery.json | jq -r '.jwks_uri')
+
+# Configure JWT auth with manual JWKS
+vault write auth/jwt/config \
+    bound_issuer="$OIDC_ISSUER" \
+    jwks_url="$JWKS_URI"
+
+# Method 2: Direct JWKS import (for air-gapped environments)
+# Convert JWKS to PEM format and configure
+# Note: This requires additional tooling to convert JWKS to PEM
+
+# Method 3: Hybrid approach (Recommended)
+# Use OIDC discovery but with pre-validated URLs
+vault write auth/jwt/config \
+    oidc_discovery_url="$OIDC_ISSUER" \
+    bound_issuer="$OIDC_ISSUER" \
+    oidc_discovery_ca_pem="$(cat k8s-ca.crt)"  # If using custom CA
+```
+
+#### Alternative: Direct Configuration (Original Method)
 
 ```bash
 # Enable JWT auth method
@@ -532,15 +596,17 @@ spec:
 
 | Aspect | Kubernetes Auth | OIDC/JWT Auth |
 |--------|----------------|----------------|
-| **Network Connectivity** | Vault → K8s API required (callback) | No connectivity needed during validation |
-| **Token Validation** | K8s API Server/TokenReview API (live callback) | Local validation with pre-configured certificates |
+| **Network Connectivity** | Vault → K8s API required (callback) | No connectivity needed (offline config possible) |
+| **Token Validation** | K8s API Server/TokenReview API (live callback) | Local validation with imported/cached certificates |
 | **Setup Complexity** | Moderate | Higher (OIDC configuration) |
+| **Configuration Method** | Direct Vault → K8s connection | kubectl export → Vault import (offline) |
 | **Security** | Good (live validation) | Excellent (cryptographic validation) |
 | **Scalability** | Limited by API calls to K8s | Highly scalable (no external calls) |
-| **Offline Validation** | No (requires K8s API callback) | Yes (with cached certificates) |
+| **Offline Validation** | No (requires K8s API callback) | Yes (with imported certificates) |
+| **Air-Gapped Support** | No (requires network connectivity) | Yes (offline configuration) |
 | **Cloud Native** | Traditional approach | Modern, cloud-native approach |
 | **Multi-cluster** | One config per cluster | Centralized OIDC provider |
-| **Network Dependency** | High (every auth requires callback) | Low (only initial setup) |
+| **Network Dependency** | High (every auth requires callback) | None (after initial offline setup) |
 
 ## Security Best Practices
 
