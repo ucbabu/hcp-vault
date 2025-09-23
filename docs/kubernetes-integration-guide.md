@@ -134,21 +134,29 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    participant Admin as Vault Admin
+    participant Vault as HCP Vault
+    participant OIDC as OIDC Provider
+    participant Cache as Vault Config
     participant Pod
     participant VSO
     participant K8sAPI as Kubernetes API
-    participant Vault as HCP Vault
-    participant Cache as Vault Local Cache
-    Note over Cache: Pre-configured OIDC<br/>Certificates & Config
     
+    Note over Admin,Cache: Initial Setup Phase (One-time)
+    Admin->>Vault: Configure JWT Auth Method
+    Vault->>OIDC: Fetch OIDC Discovery & JWKS
+    OIDC->>Vault: Return Public Keys/Certificates
+    Vault->>Cache: Store OIDC Config & Public Keys
+    
+    Note over Pod,VSO: Runtime Secret Request Phase
     Pod->>VSO: Request Secret
     VSO->>K8sAPI: Get Service Account JWT
     K8sAPI->>VSO: Return JWT Token
     VSO->>Vault: Login with JWT
-    Vault->>Cache: Get OIDC Public Keys
-    Cache->>Vault: Return Cached Certificates
+    Vault->>Cache: Get Cached OIDC Public Keys
+    Cache->>Vault: Return Pre-configured Certificates
     Vault->>Vault: Validate JWT Signature Locally
-    Note over Vault: No network call to OIDC provider<br/>during token validation
+    Note over Vault: No network call to OIDC provider<br/>Token validated with cached keys
     Vault->>VSO: Return Vault Token
     VSO->>Vault: Request Secret with Vault Token
     Vault->>VSO: Return Secret
