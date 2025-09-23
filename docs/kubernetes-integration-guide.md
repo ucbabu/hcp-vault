@@ -20,26 +20,33 @@ graph TB
         B --> C[Service Account Token]
         D[VSO] --> E[VaultAuth CR]
         E --> F[Kubernetes Auth]
+        L[K8s API Server]
+        M[TokenReview API]
     end
     
     subgraph "HCP Vault"
         G[Kubernetes Auth Method]
-        H[Service Account Validator]
+        H[Token Validator]
         I[Policy Engine]
         J[KV Secrets Engine]
         K[Database Engine]
     end
     
     C --> G
+    F --> G
     G --> H
+    H --> L
+    L --> M
+    M --> H
     H --> I
     I --> J
     I --> K
-    F --> G
     
     style G fill:#e1f5fe
     style F fill:#f3e5f5
     style A fill:#e8f5e8
+    style L fill:#fff3e0
+    style M fill:#ffebee
 ```
 
 ### Method 2: OIDC/JWT Auth Method
@@ -53,38 +60,53 @@ graph TB
         E --> F[JWT Auth]
     end
     
-    subgraph "Azure AD / OIDC Provider"
+    subgraph "Azure AD / OIDC Provider (Pre-configured)"
         L[OIDC Issuer]
-        M[Token Validation]
-        N[Public Keys]
+        M[Public Keys/Certificates]
+        N[Discovery Endpoint]
     end
     
     subgraph "HCP Vault"
         G[JWT Auth Method]
-        H[OIDC Discovery]
-        I[Token Validator]
+        H[Cached OIDC Config]
+        I[Local Token Validator]
         J[Policy Engine]
         K[KV Secrets Engine]
         O[Database Engine]
     end
     
     C --> G
-    G --> H
-    H --> L
-    L --> M
-    M --> N
-    G --> I
-    I --> J
-    I --> O
     F --> G
+    G --> I
+    I --> H
+    H -."Pre-configured\nCertificates".-> M
+    L -."Initial Setup\nOnly".-> H
+    N -."Initial Setup\nOnly".-> H
+    I --> J
+    J --> K
+    J --> O
     
     style G fill:#e1f5fe
     style F fill:#f3e5f5
     style A fill:#e8f5e8
     style L fill:#fff3e0
+    style H fill:#e8f5e8
+    style I fill:#f1f8e9
 ```
 
 ## Authentication Flow Comparison
+
+### Key Differences in Token Validation
+
+#### Kubernetes Auth Method:
+- **Live Validation**: HCP Vault makes a callback to the Kubernetes API Server's TokenReview API for every authentication request
+- **Network Dependency**: Requires continuous network connectivity between Vault and Kubernetes API Server
+- **Real-time Verification**: Each token is validated in real-time against the Kubernetes cluster
+
+#### OIDC/JWT Auth Method:
+- **Offline Validation**: Vault validates JWT tokens locally using pre-configured OIDC certificates
+- **No Runtime Connectivity**: No network calls to OIDC provider during token validation
+- **Cryptographic Verification**: Token signatures are verified using cached public keys from initial OIDC discovery
 
 ### Kubernetes Auth Flow
 
@@ -93,14 +115,14 @@ sequenceDiagram
     participant Pod
     participant VSO
     participant K8sAPI as Kubernetes API
-    participant Vault
-    participant TokenReview as Token Review API
+    participant Vault as HCP Vault
+    participant TokenReview as K8s API Server/TokenReview API
     
     Pod->>VSO: Request Secret
     VSO->>K8sAPI: Get Service Account Token
     K8sAPI->>VSO: Return JWT Token
     VSO->>Vault: Login with SA Token
-    Vault->>TokenReview: Validate Token
+    Vault->>TokenReview: Validate Token (Callback)
     TokenReview->>Vault: Token Valid + Metadata
     Vault->>VSO: Return Vault Token
     VSO->>Vault: Request Secret with Vault Token
@@ -115,16 +137,18 @@ sequenceDiagram
     participant Pod
     participant VSO
     participant K8sAPI as Kubernetes API
-    participant Vault
-    participant OIDC as OIDC Provider
+    participant Vault as HCP Vault
+    participant Cache as Vault Local Cache
+    Note over Cache: Pre-configured OIDC<br/>Certificates & Config
     
     Pod->>VSO: Request Secret
     VSO->>K8sAPI: Get Service Account JWT
     K8sAPI->>VSO: Return JWT Token
     VSO->>Vault: Login with JWT
-    Vault->>OIDC: Fetch JWKS
-    OIDC->>Vault: Return Public Keys
-    Vault->>Vault: Validate JWT Signature
+    Vault->>Cache: Get OIDC Public Keys
+    Cache->>Vault: Return Cached Certificates
+    Vault->>Vault: Validate JWT Signature Locally
+    Note over Vault: No network call to OIDC provider<br/>during token validation
     Vault->>VSO: Return Vault Token
     VSO->>Vault: Request Secret with Vault Token
     Vault->>VSO: Return Secret
@@ -502,14 +526,15 @@ spec:
 
 | Aspect | Kubernetes Auth | OIDC/JWT Auth |
 |--------|----------------|----------------|
-| **Network Connectivity** | Vault → K8s API required | No direct connectivity needed |
-| **Token Validation** | K8s TokenReview API | OIDC public key validation |
+| **Network Connectivity** | Vault → K8s API required (callback) | No connectivity needed during validation |
+| **Token Validation** | K8s API Server/TokenReview API (live callback) | Local validation with pre-configured certificates |
 | **Setup Complexity** | Moderate | Higher (OIDC configuration) |
-| **Security** | Good (direct validation) | Excellent (cryptographic validation) |
-| **Scalability** | Limited by API calls | Highly scalable |
-| **Offline Validation** | No | Yes (with cached keys) |
+| **Security** | Good (live validation) | Excellent (cryptographic validation) |
+| **Scalability** | Limited by API calls to K8s | Highly scalable (no external calls) |
+| **Offline Validation** | No (requires K8s API callback) | Yes (with cached certificates) |
 | **Cloud Native** | Traditional approach | Modern, cloud-native approach |
 | **Multi-cluster** | One config per cluster | Centralized OIDC provider |
+| **Network Dependency** | High (every auth requires callback) | Low (only initial setup) |
 
 ## Security Best Practices
 
@@ -594,8 +619,14 @@ spec:
 
 2. **Network Connectivity Issues**
    ```bash
-   # Test from Vault to K8s API
+   # Test HCP Vault callback to K8s API Server
+   # This connection is REQUIRED for Kubernetes Auth method
    curl -k $K8S_HOST/api/v1/namespaces/default
+   
+   # Check if Vault can reach TokenReview API
+   curl -k -H "Authorization: Bearer $SA_TOKEN" \
+     -H "Content-Type: application/json" \
+     -X POST $K8S_HOST/api/v1/tokenreviews
    ```
 
 ### Common Issues for OIDC/JWT
@@ -693,9 +724,17 @@ spec:
 
 ## Conclusion
 
-Both Kubernetes Auth and OIDC/JWT authentication methods provide secure integration between Kubernetes and Vault using VSO. Choose based on your requirements:
+Both Kubernetes Auth and OIDC/JWT authentication methods provide secure integration between Kubernetes and Vault using VSO, but with different architectural approaches:
 
-- **Use Kubernetes Auth** when you have direct network connectivity and prefer simpler setup
-- **Use OIDC/JWT Auth** for cloud-native, scalable deployments without network dependencies
+- **Use Kubernetes Auth** when you have reliable network connectivity between HCP Vault and your Kubernetes API Server, and prefer real-time token validation with live callbacks
+- **Use OIDC/JWT Auth** for cloud-native, scalable deployments where network isolation is preferred, and you want offline token validation without runtime dependencies on external services
 
-The OIDC/JWT method is generally recommended for production environments, especially in cloud-native architectures where network isolation and scalability are priorities.
+The **OIDC/JWT method is generally recommended** for production environments, especially in cloud-native architectures where:
+- Network isolation and security boundaries are priorities
+- Scalability without external API dependencies is required
+- You want to minimize attack surface by avoiding live callbacks
+- Offline operation capability is valuable
+
+**Key Architectural Differences:**
+- **Kubernetes Auth**: Requires HCP Vault → Kubernetes API Server callback for every authentication
+- **OIDC/JWT Auth**: Uses pre-configured certificates for local validation, no runtime network dependencies
